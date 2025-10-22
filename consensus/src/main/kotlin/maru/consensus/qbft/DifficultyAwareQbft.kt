@@ -70,7 +70,42 @@ class DifficultyAwareQbft(
         return
       }
 
-      val totalDifficulty = latestBlock.totalDifficulty.toLong()
+      // Try to get totalDifficulty. If it fails or is null, the chain is already post-TTD (PoS mode)
+      val totalDifficulty: Long
+      try {
+        val totalDifficultyBigInt = latestBlock.totalDifficulty
+        if (totalDifficultyBigInt == null) {
+          log.info(
+            "totalDifficulty is null at elBlockNumber={}. Chain is already post-TTD. Transitioning to post-TTD protocol.",
+            latestBlock.number,
+          )
+          val postTtdForkSpec =
+            ForkSpec(
+              timestampSeconds = forkSpec.timestampSeconds,
+              blockTimeSeconds = forkSpec.blockTimeSeconds,
+              configuration = difficultyAwareQbftConfig.postTtdConfig,
+            )
+          transitionToPostTtdProtocol(postTtdForkSpec)
+          stopPoller()
+          return
+        }
+        totalDifficulty = totalDifficultyBigInt.toLong()
+      } catch (e: org.web3j.exceptions.MessageDecodingException) {
+        log.info(
+          "Cannot decode totalDifficulty at elBlockNumber={}. Chain is likely post-TTD (PoS mode). Transitioning to post-TTD protocol.",
+          latestBlock.number,
+        )
+        val postTtdForkSpec =
+          ForkSpec(
+            timestampSeconds = forkSpec.timestampSeconds,
+            blockTimeSeconds = forkSpec.blockTimeSeconds,
+            configuration = difficultyAwareQbftConfig.postTtdConfig,
+          )
+        transitionToPostTtdProtocol(postTtdForkSpec)
+        stopPoller()
+        return
+      }
+
       log.debug(
         "Current elBlockNumber={}, totalDifficulty={}, terminalTotalDifficulty={}",
         latestBlock.number,
