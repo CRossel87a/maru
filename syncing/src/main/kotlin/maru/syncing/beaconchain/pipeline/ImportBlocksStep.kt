@@ -29,7 +29,14 @@ class ImportBlocksStep(
 
   override fun accept(blocksWithPeers: List<SealedBlockWithPeer>) {
     // Process blocks sequentially
-    blocksWithPeers.forEach { blockAndPeer ->
+    var shouldContinue = true
+    var lastSuccessfulBlock: ULong? = null
+    
+    for (blockAndPeer in blocksWithPeers) {
+      if (!shouldContinue) {
+        break
+      }
+      
       val beaconBlockHeader = blockAndPeer.sealedBeaconBlock.beaconBlock.beaconBlockHeader
       try {
         val result = blockImporter.importBlock(blockAndPeer.sealedBeaconBlock).join()
@@ -43,23 +50,24 @@ class ImportBlocksStep(
               shouldLog,
               30,
             )
+            lastSuccessfulBlock = beaconBlockHeader.number
           }
           ValidationResultCode.REJECT -> {
             blockAndPeer.peer.disconnectCleanly(DisconnectReason.REMOTE_FAULT)
             log.error(
-              "Block validation failed for block: clBlockNumber:{} clBlockHash={}",
+              "Block validation failed for block: clBlockNumber:{} clBlockHash={} - stopping batch import",
               beaconBlockHeader.number,
               beaconBlockHeader.hash.encodeHex(),
             )
-            return
+            shouldContinue = false
           }
           ValidationResultCode.IGNORE -> {
             log.warn(
-              "Block validation ignored for block: clBlockNumber:{}, clBlockHash={}",
+              "Block validation ignored for block: clBlockNumber:{}, clBlockHash={} - stopping batch import",
               beaconBlockHeader.number,
               beaconBlockHeader.hash.encodeHex(),
             )
-            return
+            shouldContinue = false
           }
         }
       } catch (e: Exception) {
@@ -73,6 +81,19 @@ class ImportBlocksStep(
         throw e
       }
     }
+    
+    // If we didn't successfully import all blocks, throw an exception to restart the pipeline
+    // from the correct position (last successful block + 1)
+    if (!shouldContinue) {
+      val message = if (lastSuccessfulBlock != null) {
+        "Block import stopped at clBlockNumber=${lastSuccessfulBlock}. Pipeline will restart from block ${lastSuccessfulBlock + 1UL}"
+      } else {
+        "Block import stopped before any blocks were imported. Pipeline will restart."
+      }
+      log.info(message)
+      throw RuntimeException("Block import incomplete: $message")
+    }
+    
     if (blocksWithPeers.isNotEmpty()) {
       // get a list of peers that have provided at least one block and reward them
       blocksWithPeers.stream().map({ it.peer }).distinct().forEach(

@@ -64,7 +64,7 @@ class ImportBlocksStepTest {
   }
 
   @Test
-  fun `stops processing on REJECT result`() {
+  fun `stops processing on REJECT result and throws exception`() {
     val block1 = DataGenerators.randomSealedBeaconBlock(1u)
     val block2 = DataGenerators.randomSealedBeaconBlock(2u)
     val block3 = DataGenerators.randomSealedBeaconBlock(3u)
@@ -76,7 +76,10 @@ class ImportBlocksStepTest {
     ).thenReturn(SafeFuture.completedFuture(Invalid("Block validation failed")))
     whenever(blockImporter.importBlock(block3)).thenReturn(SafeFuture.completedFuture(Valid))
 
-    importBlocksStep.accept(createSealedBlocksWithPeers(blocks))
+    assertThatThrownBy { importBlocksStep.accept(createSealedBlocksWithPeers(blocks)) }
+      .isInstanceOf(RuntimeException::class.java)
+      .hasMessageContaining("Block import incomplete")
+      .hasMessageContaining("clBlockNumber=1")
 
     verify(blockImporter).importBlock(block1)
     verify(blockImporter).importBlock(block2)
@@ -84,7 +87,7 @@ class ImportBlocksStepTest {
   }
 
   @Test
-  fun `stops processing on IGNORE result`() {
+  fun `stops processing on IGNORE result and throws exception`() {
     val block1 = DataGenerators.randomSealedBeaconBlock(1u)
     val block2 = DataGenerators.randomSealedBeaconBlock(2u)
     val block3 = DataGenerators.randomSealedBeaconBlock(3u)
@@ -100,11 +103,38 @@ class ImportBlocksStepTest {
     )
     whenever(blockImporter.importBlock(block3)).thenReturn(SafeFuture.completedFuture(Valid))
 
-    importBlocksStep.accept(createSealedBlocksWithPeers(blocks))
+    assertThatThrownBy { importBlocksStep.accept(createSealedBlocksWithPeers(blocks)) }
+      .isInstanceOf(RuntimeException::class.java)
+      .hasMessageContaining("Block import incomplete")
+      .hasMessageContaining("clBlockNumber=1")
 
     verify(blockImporter).importBlock(block1)
     verify(blockImporter).importBlock(block2)
     verify(blockImporter, never()).importBlock(block3)
+  }
+
+  @Test
+  fun `throws exception when first block is ignored`() {
+    val block1 = DataGenerators.randomSealedBeaconBlock(1u)
+    val block2 = DataGenerators.randomSealedBeaconBlock(2u)
+    val blocks = listOf(block1, block2)
+
+    whenever(blockImporter.importBlock(block1)).thenReturn(
+      SafeFuture.completedFuture(
+        Ignore(
+          "Block validation ignored",
+        ),
+      ),
+    )
+    whenever(blockImporter.importBlock(block2)).thenReturn(SafeFuture.completedFuture(Valid))
+
+    assertThatThrownBy { importBlocksStep.accept(createSealedBlocksWithPeers(blocks)) }
+      .isInstanceOf(RuntimeException::class.java)
+      .hasMessageContaining("Block import incomplete")
+      .hasMessageContaining("Pipeline will restart")
+
+    verify(blockImporter).importBlock(block1)
+    verify(blockImporter, never()).importBlock(block2)
   }
 
   @Test
@@ -147,7 +177,7 @@ class ImportBlocksStepTest {
   }
 
   @Test
-  fun `handles mixed results correctly`() {
+  fun `handles mixed results correctly and throws exception on ignore`() {
     val block1 = DataGenerators.randomSealedBeaconBlock(1u)
     val block2 = DataGenerators.randomSealedBeaconBlock(2u)
     val block3 = DataGenerators.randomSealedBeaconBlock(3u)
@@ -161,7 +191,10 @@ class ImportBlocksStepTest {
     ).thenReturn(SafeFuture.completedFuture(Ignore("Block ignored for mixed results test")))
     whenever(blockImporter.importBlock(block4)).thenReturn(SafeFuture.completedFuture(Valid))
 
-    importBlocksStep.accept(createSealedBlocksWithPeers(blocks))
+    assertThatThrownBy { importBlocksStep.accept(createSealedBlocksWithPeers(blocks)) }
+      .isInstanceOf(RuntimeException::class.java)
+      .hasMessageContaining("Block import incomplete")
+      .hasMessageContaining("clBlockNumber=2")
 
     verify(blockImporter).importBlock(block1)
     verify(blockImporter).importBlock(block2)
